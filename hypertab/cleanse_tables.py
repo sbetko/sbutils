@@ -1,125 +1,88 @@
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 
-def flatten_single_column_tables(soup):
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if all(len(row.find_all(["td", "th"])) == 1 for row in rows):
-            items = [
-                cell.get_text(strip=True)
-                for row in rows
-                for cell in row.find_all(["td", "th"])
-            ]
-            table.replace_with("\n".join(f"- {item}" for item in items))
-    return soup
+def flatten_single_column_tables(soup) -> BeautifulSoup:
+    """Flatten non-nested single-column tables.
 
+    Args:
+        soup (BeautifulSoup): The input HTML as a BeautifulSoup object.
 
-def promote_top_row_headers(soup):
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if rows and len(rows[0].find_all(["td", "th"], colspan=True)) == len(
-            rows[0].find_all(["td", "th"])
-        ):
-            header = rows[0].get_text(strip=True)
-            rows[0].decompose()
-            table.insert_before(f"## {header}\n")
-    return soup
+    Returns:
+        BeautifulSoup: The transformed HTML with specific tables flattened.
+    """
 
+    # Find all table elements
+    all_tables = soup.find_all("table")
 
-def unnest_nested_tables(soup):
-    for table in soup.find_all("table"):
-        nested_tables = table.find_all("table")
-        for nested_table in nested_tables:
-            table.insert_before(nested_table.extract())
-    return soup
+    for table in all_tables:
+        # Check if the table is nested within another table
+        if table.find_parent("table"):
+            continue  # Skip nested tables
 
+        # Find all direct tr children of the table
+        rows = table.find_all("tr", recursive=False)
 
-def rebuild_tables_with_span_attributes(soup):
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
+        # Verify that all rows have exactly one td or th
+        single_column = True
         for row in rows:
-            cells = row.find_all(["td", "th"])
-            for cell in cells:
-                rowspan = int(cell.get("rowspan", 1))
-                colspan = int(cell.get("colspan", 1))
+            # Consider both <td> and <th> for flexibility
+            cells = row.find_all(["td", "th"], recursive=False)
+            if len(cells) != 1:
+                single_column = False
+                break  # No need to check further if any row has multiple cells
 
-                # Handle `rowspan`
-                if rowspan > 1:
-                    next_rows = rows[rows.index(row) + 1 : rows.index(row) + rowspan]
-                    for r in next_rows:
-                        new_cell = soup.new_tag(cell.name)
-                        new_cell.string = cell.get_text(strip=True)
-                        r.insert(len(r.find_all(["td", "th"])), new_cell)
-                    cell.attrs.pop("rowspan", None)
+        if not single_column:
+            continue  # Skip tables that do not have exactly one column
 
-                # Handle `colspan`
-                if colspan > 1:
-                    for _ in range(colspan - 1):
-                        new_cell = soup.new_tag(cell.name)
-                        new_cell.string = cell.get_text(strip=True)
-                        row.insert(row.find_all(["td", "th"]).index(cell) + 1, new_cell)
-                    cell.attrs.pop("colspan", None)
-    return soup
+        # List to hold the new content that will replace the table
+        new_contents = []
 
+        for row in rows:
+            cell = row.find(["td", "th"], recursive=False)
+            if cell:
+                # Iterate over the contents of the cell
+                for content in cell.contents:
+                    # If the content is a NavigableString or a Tag, append it
+                    if isinstance(content, (NavigableString, Tag)):
+                        new_contents.append(content)
+            # After each row's content, append a <br/> tag for separation
+            new_contents.append(soup.new_tag("br"))
 
-def combine_adjacent_empty_rows(soup):
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        for i in range(len(rows) - 1):
-            if not rows[i].get_text(strip=True) and not rows[i + 1].get_text(
-                strip=True
-            ):
-                rows[i].decompose()
-    return soup
+        # Insert the new contents before the table in the DOM
+        for content in new_contents:
+            table.insert_before(content)
 
+        # Remove the original table from the DOM
+        table.decompose()
 
-def add_table_captions(soup):
-    for table in soup.find_all("table"):
-        caption = table.find("caption")
-        if caption:
-            table.insert_before(f"**{caption.get_text(strip=True)}**\n")
-            caption.decompose()
     return soup
 
 
 def parse_html_to_markdown_friendly_html(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
-    # Apply transformations in order
     soup = flatten_single_column_tables(soup)
-    soup = promote_top_row_headers(soup)
-    soup = unnest_nested_tables(soup)
-    soup = rebuild_tables_with_span_attributes(soup)
-    soup = combine_adjacent_empty_rows(soup)
-    soup = add_table_captions(soup)
 
     return str(soup)
 
 
-# Example Usage
 def main():
-    # Example HTML input
     html = """
-    <table>
-        <tr><td colspan="2">Header spanning two columns</td></tr>
-        <tr><td>Row 1, Col 1</td><td>Row 1, Col 2</td></tr>
-        <tr><td>Row 2, Col 1</td><td>Row 2, Col 2</td></tr>
-        <tr><td><table><tr><td>Nested Row 1</td></tr></table></td></tr>
-    </table>
+    <html>
+        <body>
+            <table>
+                <tr><td>Header 1</td></tr>
+                <tr><td>Row 1, Col 1</td></tr>
+                <tr><td>Row 2, Col 1</td></tr>
+                <tr><td><table><tr><td>Nested Row 1</td></tr></table></td></tr>
+            </table>
+        </body>
+    </html>
     """
-    transformed_html = parse_html_to_markdown_friendly_html(html)
-    print(transformed_html)
 
-    html = """
-    <table>
-        <tr><td colspan="2">Header spanning two columns</td><td> Header 3</td></tr>
-        <tr><td>Row 1, Col 1</td><td>Row 1, Col 2</td><td>Row 1, Col 3</td></tr>
-        <tr><td>Row 2, Col 1</td><td>Row 2, Col 2</td><td>Row 2, Col 3</td></tr>
-        <tr><td><table><tr><td>Nested Row 1</td></tr></table></td></tr>
-    </table>
-    """
+    print("Input HTML:\n", html)
     transformed_html = parse_html_to_markdown_friendly_html(html)
-    print(transformed_html)
+    print("\nTransformed HTML:\n", transformed_html)
 
 
 if __name__ == "__main__":
