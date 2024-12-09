@@ -1,4 +1,4 @@
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup
 
 
 def flatten_single_column_tables(soup) -> BeautifulSoup:
@@ -10,52 +10,48 @@ def flatten_single_column_tables(soup) -> BeautifulSoup:
     Returns:
         BeautifulSoup: The transformed HTML with specific tables flattened.
     """
+    def is_top_level_table(tbl):
+        return not tbl.find_parent("table")
 
-    # Find all table elements
-    all_tables = soup.find_all("table")
+    def is_single_column_table(tbl):
+        rows = tbl.find_all("tr", recursive=False)
+        for r in rows:
+            tds = r.find_all("td", recursive=False)
+            if len(tds) != 1:
+                return False
+        return True
 
-    for table in all_tables:
-        # Check if the table is nested within another table
-        if table.find_parent("table"):
-            continue  # Skip nested tables
-
-        # Find all direct tr children of the table
-        rows = table.find_all("tr", recursive=False)
-
-        # Verify that all rows have exactly one td or th
-        single_column = True
-        for row in rows:
-            # Consider both <td> and <th> for flexibility
-            cells = row.find_all(["td", "th"], recursive=False)
-            if len(cells) != 1:
-                single_column = False
-                break  # No need to check further if any row has multiple cells
-
-        if not single_column:
-            continue  # Skip tables that do not have exactly one column
-
-        # List to hold the new content that will replace the table
+    def flatten_table(tbl):
         new_contents = []
-
+        rows = tbl.find_all("tr", recursive=False)
         for row in rows:
-            cell = row.find(["td", "th"], recursive=False)
-            if cell:
-                # Iterate over the contents of the cell
-                for content in cell.contents:
-                    # If the content is a NavigableString or a Tag, append it
-                    if isinstance(content, (NavigableString, Tag)):
-                        new_contents.append(content)
-            # After each row's content, append a <br/> tag for separation
+            tds = row.find_all("td", recursive=False)
+            # Each row is guaranteed one <td> if table is single-column
+            td = tds[0]
+            # We want to extract the contents of the td and place them inline
+            # Preserve nested tables, just unwrap the td itself
+            # Extract contents but do not lose nested tags
+            for child in td.contents:
+                new_contents.append(child)
+            # After each row, add a <br/>
             new_contents.append(soup.new_tag("br"))
+        return new_contents
 
-        # Insert the new contents before the table in the DOM
-        for content in new_contents:
-            table.insert_before(content)
+    # Find all candidate tables
+    candidate_tables = [
+        t
+        for t in soup.find_all("table")
+        if is_top_level_table(t) and is_single_column_table(t)
+    ]
 
-        # Remove the original table from the DOM
-        table.decompose()
+    for tbl in candidate_tables:
+        flattened = flatten_table(tbl)
+        # Replace the table with flattened content
+        tbl.insert_before(*flattened)
+        tbl.decompose()
 
     return soup
+
 
 
 def parse_html_to_markdown_friendly_html(html: str) -> str:
