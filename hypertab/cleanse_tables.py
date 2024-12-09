@@ -10,11 +10,30 @@ def flatten_single_column_tables(soup) -> BeautifulSoup:
     Returns:
         BeautifulSoup: The transformed HTML with specific tables flattened.
     """
+
+    def get_table_rows(table):
+        # Prefer rows from thead, tbody, tfoot if present
+        sections = []
+        for tag_name in ["thead", "tbody", "tfoot"]:
+            section = table.find(tag_name, recursive=False)
+            if section:
+                sections.append(section)
+
+        rows = []
+        if sections:
+            # Gather rows from these sections
+            for sec in sections:
+                rows.extend(sec.find_all("tr", recursive=False))
+        else:
+            # No thead/tbody/tfoot found; directly extract top-level rows
+            rows = table.find_all("tr", recursive=False)
+        return rows
+
     def is_top_level_table(tbl):
         return not tbl.find_parent("table")
 
     def is_single_column_table(tbl):
-        rows = tbl.find_all("tr", recursive=False)
+        rows = get_table_rows(tbl)
         for r in rows:
             tds = r.find_all("td", recursive=False)
             if len(tds) != 1:
@@ -22,22 +41,20 @@ def flatten_single_column_tables(soup) -> BeautifulSoup:
         return True
 
     def flatten_table(tbl):
+        rows = get_table_rows(tbl)
         new_contents = []
-        rows = tbl.find_all("tr", recursive=False)
+
         for row in rows:
             tds = row.find_all("td", recursive=False)
-            # Each row is guaranteed one <td> if table is single-column
             td = tds[0]
-            # We want to extract the contents of the td and place them inline
-            # Preserve nested tables, just unwrap the td itself
-            # Extract contents but do not lose nested tags
+            # Extract all child nodes within the td
             for child in td.contents:
                 new_contents.append(child)
-            # After each row, add a <br/>
+            # Add a <br/> after each row
             new_contents.append(soup.new_tag("br"))
+
         return new_contents
 
-    # Find all candidate tables
     candidate_tables = [
         t
         for t in soup.find_all("table")
@@ -46,12 +63,10 @@ def flatten_single_column_tables(soup) -> BeautifulSoup:
 
     for tbl in candidate_tables:
         flattened = flatten_table(tbl)
-        # Replace the table with flattened content
         tbl.insert_before(*flattened)
         tbl.decompose()
 
     return soup
-
 
 
 def parse_html_to_markdown_friendly_html(html: str) -> str:
